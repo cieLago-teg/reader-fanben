@@ -1,0 +1,185 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DocumentSourceType {
+  URL
+  PASTE
+}
+
+enum DocumentStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum AnalysisStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum AnalysisSourceType {
+  SYSTEM
+  AI
+  MANUAL
+}
+
+model User {
+  id        String   @id
+  createdAt DateTime @default(now())
+
+  documents Document[]
+  favorites Favorite[]
+  progress  ReadingProgress[]
+  vocab     VocabItem[]
+}
+
+model Document {
+  id               String             @id @default(cuid())
+  userId           String
+  title            String
+  sourceType       DocumentSourceType
+  sourceUrl        String?
+  language         String             @default("en")
+  status           DocumentStatus     @default(PROCESSING)
+  analysisStatus   AnalysisStatus     @default(PENDING)
+  error            String?
+  analysisError    String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  analysisUpdatedAt DateTime?
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paragraphs  ParagraphPair[]
+  sentences   Sentence[]
+  favorites   Favorite[]
+  progress    ReadingProgress[]
+  vocab       VocabItem[]
+
+  @@index([userId, createdAt])
+}
+
+model ParagraphPair {
+  id         String   @id @default(cuid())
+  documentId String
+  idx        Int
+  enText     String
+  zhText     String
+  createdAt  DateTime @default(now())
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sentences  Sentence[]
+
+  @@unique([documentId, idx])
+  @@index([documentId, idx])
+}
+
+model Sentence {
+  id          String   @id @default(cuid())
+  documentId  String
+  paragraphId String
+  idx         Int
+  paragraphIdx Int
+  sentenceIdx Int
+  stableKey   String
+  enText      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  document   Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  paragraph  ParagraphPair   @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  analysis   SentenceAnalysis?
+
+  @@unique([documentId, idx])
+  @@unique([documentId, stableKey])
+  @@index([paragraphId, sentenceIdx])
+  @@index([documentId, paragraphIdx, sentenceIdx])
+}
+
+model SentenceAnalysis {
+  id          String             @id @default(cuid())
+  sentenceId  String             @unique
+  status      AnalysisStatus     @default(PENDING)
+  sourceType  AnalysisSourceType @default(SYSTEM)
+  provider    String?
+  version     Int                @default(1)
+  retryCount  Int                @default(0)
+  payloadJson Json?
+  error       String?
+  requestedAt DateTime           @default(now())
+  completedAt DateTime?
+  updatedAt   DateTime           @updatedAt
+
+  sentence    Sentence           @relation(fields: [sentenceId], references: [id], onDelete: Cascade)
+}
+
+model ReadingProgress {
+  id              String   @id @default(cuid())
+  userId          String
+  documentId      String
+  lastParagraphIdx Int
+  percent         Float
+  updatedAt       DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, documentId])
+}
+
+model Favorite {
+  id         String   @id @default(cuid())
+  userId     String
+  documentId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, documentId])
+}
+
+model VocabItem {
+  id          String   @id @default(cuid())
+  userId      String
+  documentId  String?
+  word        String
+  normalized  String
+  payloadJson Json
+  sourceContext String?
+  addedAt     DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([userId, addedAt])
+  @@index([userId, normalized])
+}
+
+model DictionaryCache {
+  id         String   @id @default(cuid())
+  key        String   @unique
+  provider   String
+  payloadJson Json
+  expiresAt  DateTime?
+  updatedAt  DateTime @updatedAt
+}
+
+model TranslationCache {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  provider  String
+  zhText    String
+  updatedAt DateTime @updatedAt
+}

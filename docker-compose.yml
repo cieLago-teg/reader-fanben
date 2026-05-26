@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: reader_fanben_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: reader_fanben
+    ports:
+      - "5432:5432"
+    volumes:
+      - reader_fanben_pgdata:/var/lib/postgresql/data
+
+volumes:
+  reader_fanben_pgdata:
+
