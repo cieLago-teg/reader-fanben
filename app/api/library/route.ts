@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getOrCreateUserId, attachUserIdHeader } from "@/lib/requestUser";
-import { getErrorMessage } from "@/lib/error";
+import { getErrorMessage, getErrorDetail } from "@/lib/error";
 import { buildLibraryDocumentItem } from "@/lib/reader/documentAssets";
 import { jsonError, jsonOk } from "../_shared/response";
 
@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
       { headers },
     );
   } catch (e: unknown) {
+    // 详细错误信息打到 server 日志，便于排查 "Invalid `prisma.xxx()` invocation:" 这种上下文缺失的报错
+    console.error("[api/library] error:", getErrorDetail(e));
     return jsonError(getErrorMessage(e, "获取列表失败"), 400, { headers });
   }
 }
