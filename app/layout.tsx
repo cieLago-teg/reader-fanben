@@ -25,6 +25,22 @@ export default function RootLayout({
       lang="zh-CN"
       className="h-full antialiased"
     >
+      <head>
+        <link
+          rel="preconnect"
+          href="https://fonts.googleapis.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&text=导库词导入文章生词本FR&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="min-h-full bg-[#F5F2E8] text-zinc-900">
         <AppShell>{children}</AppShell>
       </body>

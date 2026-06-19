@@ -21,10 +21,10 @@ function NavItem({
       aria-label={label}
       title={label}
       className={[
-        "flex h-10 w-10 items-center justify-center rounded-2xl border text-xs font-medium transition-colors",
+        "flex h-11 w-11 items-center justify-center rounded-2xl border text-sm font-medium font-cn transition-colors",
         active
           ? "border-zinc-900 bg-zinc-900 text-white shadow-sm"
-          : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-900",
+          : "border-zinc-200 bg-white text-zinc-400 hover:border-zinc-300 hover:text-zinc-700",
       ].join(" ")}
     >
       {shortLabel}
@@ -47,7 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex flex-col items-center gap-4">
             <span
               aria-label="Fanben Reader"
-              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-900 text-sm font-semibold text-white select-none"
+              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-900 text-sm font-semibold text-white select-none font-cn"
             >
               FR
             </span>

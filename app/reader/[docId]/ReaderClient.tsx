@@ -1183,7 +1183,7 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-[#FDFDFC] text-zinc-900">
+    <div className="fixed inset-0 z-50 flex bg-[#F5F2E8] text-zinc-900">
       {/* Sidebar */}
       <aside className="w-14 shrink-0 border-r border-zinc-100 flex-col items-center py-4 justify-between hidden md:flex">
         <div className="flex flex-col items-center gap-6">
@@ -1220,7 +1220,7 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col h-full relative overflow-hidden">
         {/* Top Navigation */}
-        <header className="h-14 flex items-center justify-between px-6 shrink-0 bg-[#FDFDFC] z-10 border-b border-transparent">
+        <header className="h-14 flex items-center justify-between px-6 shrink-0 bg-[#F5F2E8] z-10 border-b border-transparent">
           <Link href="/library" className="text-zinc-400 hover:text-zinc-900 transition-colors">
             <span className="sr-only">返回文章库</span>
             <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
