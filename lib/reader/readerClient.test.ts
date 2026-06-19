@@ -762,7 +762,7 @@ test("switching from English mode to bilingual keeps the current paragraph ancho
   currentEnv.scrollCalls.length = 0;
 
   const bilingualButton = Array.from(currentEnv.container.querySelectorAll("button")).find((button) =>
-    button.getAttribute("title")?.includes("切换模式"),
+    button.getAttribute("title")?.includes("中英"),
   );
   assert.ok(bilingualButton, "找不到双语切换按钮");
 

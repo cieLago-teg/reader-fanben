@@ -25,6 +25,22 @@ type DocItem = {
   };
 };
 
+// Stable formatter: lock locale + timezone so SSR and the browser agree.
+const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return dateFormatter.format(date);
+}
+
 const WORKFLOW_STEPS = [
   {
     n: "01",
@@ -133,7 +149,7 @@ export default function LibraryPage() {
                         {it.title}
                       </div>
                       <div className="mt-1 text-xs text-zinc-500">
-                        {new Date(it.createdAt).toLocaleString()} · 正文 {it.status.content} · 解析{" "}
+                        {formatDateTime(it.createdAt)} · 正文 {it.status.content} · 解析{" "}
                         {it.status.analysis}
                         {it.favored ? " · 已收藏" : ""}
                       </div>

@@ -3,6 +3,7 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -18,9 +19,32 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    color-scheme: dark;
   }
 }
 
 body {
   font-family: var(--font-sans);
+}
+
+/* Global focus ring: visible only for keyboard users, never on mouse click. */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid rgb(16 185 129 / 0.7);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Honor reduced-motion preference across all animations and transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

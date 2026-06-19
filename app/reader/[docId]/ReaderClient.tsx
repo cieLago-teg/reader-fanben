@@ -171,6 +171,53 @@ function readStoredDensity(): ReaderDensity {
   return "relaxed";
 }
 
+function readUrlState(): {
+  railOpen: boolean | null;
+  railTab: RailTab | null;
+  paragraphIdx: number | null;
+} {
+  if (typeof window === "undefined") {
+    return { railOpen: null, railTab: null, paragraphIdx: null };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const rail = params.get("rail");
+  const tab = params.get("tab");
+  const p = params.get("p");
+
+  let railTab: RailTab | null = null;
+  if (tab === "notes") railTab = "notes";
+  else if (tab === "analysis") railTab = "analysis";
+
+  return {
+    railOpen: rail === "open" ? true : rail === "closed" ? false : null,
+    railTab,
+    paragraphIdx: p !== null && Number.isFinite(Number(p)) ? Math.max(0, Math.floor(Number(p))) : null,
+  };
+}
+
+function syncStateToUrl(state: { railOpen: boolean; railTab: RailTab; activeIdx: number | null }) {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+
+  if (state.railOpen) {
+    params.set("rail", "open");
+    params.set("tab", state.railTab);
+  } else {
+    params.set("rail", "closed");
+    params.delete("tab");
+  }
+
+  if (state.activeIdx !== null) {
+    params.set("p", String(state.activeIdx));
+  } else {
+    params.delete("p");
+  }
+
+  const next = params.toString();
+  const nextUrl = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`;
+  window.history.replaceState(window.history.state, "", nextUrl);
+}
+
 function getClosestParagraphIdx(paragraphRefs: Map<number, HTMLParagraphElement>) {
   if (typeof window === "undefined" || paragraphRefs.size === 0) return null;
 
@@ -284,7 +331,16 @@ function getSentenceStatusTone(sentence: SentenceCard) {
   const status = sentence.analysis?.status ?? "PENDING";
   if (status === "READY") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "FAILED") return "border-red-200 bg-red-50 text-red-700";
+  if (status === "PROCESSING") return "border-sky-200 bg-sky-50 text-sky-700";
   return "border-zinc-200 bg-zinc-50 text-zinc-600";
+}
+
+function getSentenceStatusDotClass(sentence: SentenceCard) {
+  const status = sentence.analysis?.status ?? "PENDING";
+  if (status === "READY") return "bg-emerald-500";
+  if (status === "FAILED") return "bg-red-500";
+  if (status === "PROCESSING") return "bg-sky-500 animate-pulse";
+  return "bg-zinc-300";
 }
 
 const INLINE_ANNOTATION_TONES = {
@@ -538,16 +594,28 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
 
   useEffect(() => {
     const nextViewMode = readStoredViewMode();
-    const nextRailState = readStoredRailState();
     const nextDensity = readStoredDensity();
+    const urlState = readUrlState();
+    const nextRailState = urlState.railOpen ?? readStoredRailState();
+    const nextRailTab: RailTab = urlState.railTab ?? "analysis";
     const frameId = window.requestAnimationFrame(() => {
       setViewMode(nextViewMode);
       setIsRailOpen(nextRailState);
       setReaderDensity(nextDensity);
+      setRailTab(nextRailTab);
+      if (urlState.paragraphIdx !== null) {
+        setFocusedParagraphIdx(urlState.paragraphIdx);
+      }
       preferencesLoadedRef.current = true;
     });
     return () => window.cancelAnimationFrame(frameId);
   }, []);
+
+  // Mirror rail / tab / active paragraph into the URL so refreshes + shares keep state.
+  useEffect(() => {
+    if (!preferencesLoadedRef.current) return;
+    syncStateToUrl({ railOpen: isRailOpen, railTab, activeIdx: focusedParagraphIdx });
+  }, [isRailOpen, railTab, focusedParagraphIdx]);
 
   useEffect(() => {
     void loadDocument({ syncPercent: true });
@@ -559,6 +627,10 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
       const target = event.target as Node | null;
       if (!target) return;
       if (railRef.current && railRef.current.contains(target)) return;
+      // Don't auto-close when the user is clicking the rail toggle button itself —
+      // a separate capture-phase handler would race with its onClick and leave the
+      // rail stuck in the wrong state. The button owns the toggle.
+      if (target instanceof Element && target.closest("[data-rail-trigger]")) return;
       setIsRailOpen(false);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(RAIL_OPEN_STORAGE_KEY, "0");
@@ -721,11 +793,12 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
     setActiveIdx(idx);
     setFocusedParagraphIdx(idx);
     setRailTab("analysis");
-    if (!isRailOpen) {
-      setIsRailOpen(true);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(RAIL_OPEN_STORAGE_KEY, "1");
-      }
+    // Always force the rail open here — the outside-click handler may have just
+    // flipped it to `false` on pointerdown, and the onClick closure still sees
+    // the previous value, so a simple `if (!isRailOpen)` would silently no-op.
+    setIsRailOpen(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(RAIL_OPEN_STORAGE_KEY, "1");
     }
     if (sentenceId) {
       setSelectedSentenceId(sentenceId);
@@ -1037,6 +1110,11 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
   };
 
   const speak = (text: string) => {
+    // If the same text is already playing, the second click stops it.
+    if (speakingText === text) {
+      stopSpeaking();
+      return;
+    }
     const normalized = normalizeSelectedWord(text);
     const result = lookupCacheRef.current.get(normalized);
     if (audioRef.current) {
@@ -1066,6 +1144,50 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
       window.speechSynthesis.speak(utterance);
     }
   };
+
+  const stopSpeaking = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeakingText(null);
+  };
+
+  const closeLookup = useCallback(() => {
+    audioRef.current?.pause();
+    setPopoverPos(null);
+    setLookup(null);
+    setLookupError(null);
+    setVocabStatus("idle");
+    setVocabMessage(null);
+  }, []);
+
+  // Global keyboard shortcuts: Esc closes the lookup popover or stops speech.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        // Let the field handle its own Esc (e.g. IME composition cancel).
+        return;
+      }
+      if (popoverPos) {
+        event.preventDefault();
+        closeLookup();
+        return;
+      }
+      if (speakingText) {
+        event.preventDefault();
+        stopSpeaking();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [popoverPos, speakingText, closeLookup]);
 
   const addToVocab = async () => {
     const word = lookup?.headword || selectedWord;
@@ -1107,29 +1229,32 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
       {/* Sidebar */}
       <aside className="w-14 shrink-0 border-r border-zinc-100 flex-col items-center py-4 justify-between hidden md:flex">
         <div className="flex flex-col items-center gap-6">
-          <div className="font-bold text-xl mb-2">R</div>
-          <Link href="/library" className="text-zinc-400 hover:text-zinc-900" title="书库">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          <div className="font-bold text-xl mb-2" aria-label="Fanben Reader">R</div>
+          <Link
+            href="/library"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70"
+            title="书库"
+            aria-label="返回文章库"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
           </Link>
-          <button className="text-zinc-400 hover:text-zinc-900" title="阅读" aria-label="阅读视图">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-          </button>
-          <button className="text-zinc-400 hover:text-zinc-900" title="书签" aria-label="书签">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-          </button>
-          <button className="text-zinc-400 hover:text-zinc-900" title="历史" aria-label="历史记录">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </button>
-        </div>
-        <div className="flex flex-col items-center gap-6">
-          <button className="text-zinc-400 hover:text-zinc-900" title="搜索" aria-label="搜索">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          </button>
-          <button className="text-zinc-400 hover:text-zinc-900" title="设置" aria-label="设置">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </button>
-          <button className="text-zinc-400 hover:text-zinc-900" title="我的" aria-label="我的账户">
-            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <button
+            type="button"
+            onClick={toggleRail}
+            data-rail-trigger
+            aria-label={isRailOpen ? "收起学习侧栏" : "打开学习侧栏"}
+            aria-pressed={isRailOpen}
+            className={[
+              "inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+              isRailOpen ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-900",
+            ].join(" ")}
+            title="学习侧栏"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true">
+              <path d="M9 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4" />
+              <polyline points="11 12 12 12 12 17 13 17" />
+              <circle cx="12" cy="7" r="1.5" fill="currentColor" stroke="none" />
+            </svg>
           </button>
         </div>
       </aside>
@@ -1148,61 +1273,87 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
             data-toolbar-balance={isRailOpen ? "rail-open" : "default"}
             className={[
               "flex items-center text-zinc-400 font-medium transition-all duration-200",
-              isRailOpen ? "gap-4 text-[12px]" : "gap-6 text-[13px]",
+              isRailOpen ? "gap-3 text-[12px]" : "gap-6 text-[13px]",
             ].join(" ")}
           >
-            <span className={["tabular-nums transition-all", isRailOpen ? "min-w-10 text-right" : ""].join(" ")}>{Math.round(percent * 100)}%</span>
-            <button
-              onClick={toggleViewMode}
-              className={[
-                "inline-flex items-center rounded-full transition-colors",
-                isRailOpen ? "px-2.5 py-1 hover:bg-zinc-50 hover:text-zinc-900" : "hover:text-zinc-900",
-              ].join(" ")}
-              title="切换模式"
-              aria-label={`切换阅读模式，当前${readingModeText}`}
+            <span
+              aria-label={`阅读进度 ${Math.round(percent * 100)}%`}
+              className={["tabular-nums transition-all", isRailOpen ? "min-w-10 text-right" : ""].join(" ")}
             >
-              <span className="font-serif italic text-[15px]">A</span>
-              <span className="ml-[1px]">文</span>
-            </button>
-            <button
+              {Math.round(percent * 100)}%
+            </span>
+
+            <div
+              role="group"
+              aria-label="阅读模式"
               className={[
-                "inline-flex items-center justify-center rounded-full border transition-colors",
-                isRailOpen
-                  ? "h-8 w-8 border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
-                  : "border-transparent hover:text-zinc-900",
+                "inline-flex items-center rounded-full border bg-white p-0.5 transition-colors",
+                isRailOpen ? "border-zinc-200" : "border-zinc-200",
               ].join(" ")}
-              title="编辑"
-              aria-label="编辑文章"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (viewMode === "en") return;
+                  toggleViewMode();
+                }}
+                aria-pressed={viewMode === "en"}
+                className={[
+                  "rounded-full px-3 py-1 text-[11px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+                  viewMode === "en" ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900",
+                ].join(" ")}
+                title="纯英文阅读模式"
+              >
+                EN
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (viewMode === "bilingual") return;
+                  toggleViewMode();
+                }}
+                aria-pressed={viewMode === "bilingual"}
+                className={[
+                  "rounded-full px-3 py-1 text-[11px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+                  viewMode === "bilingual" ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900",
+                ].join(" ")}
+                title="中英双语阅读模式"
+              >
+                中英
+              </button>
+            </div>
+
             <button
+              type="button"
               onClick={toggleFavorite}
+              aria-pressed={favored}
               className={[
-                "inline-flex items-center justify-center rounded-full border transition-colors",
+                "inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
                 isRailOpen
-                  ? "h-8 w-8 border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
+                  ? "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
                   : "border-transparent",
-                favored ? "text-zinc-900" : "hover:text-zinc-900",
+                favored ? "border-zinc-300 bg-zinc-50 text-zinc-900" : "hover:text-zinc-900",
               ].join(" ")}
               title="收藏"
               aria-label={favored ? "取消收藏文章" : "收藏文章"}
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill={favored ? "currentColor" : "none"}><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill={favored ? "currentColor" : "none"} aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
             </button>
             <button
+              type="button"
               onClick={() => setIsAppearanceOpen((current) => !current)}
+              aria-pressed={isAppearanceOpen}
+              aria-label="调整阅读主题"
               className={[
-                "inline-flex items-center justify-center rounded-full border transition-colors",
+                "inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
                 isRailOpen
-                  ? "h-8 w-8 border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
+                  ? "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
                   : "border-transparent",
-                isAppearanceOpen ? "text-zinc-900" : "hover:text-zinc-900",
+                isAppearanceOpen ? "border-zinc-300 bg-zinc-50 text-zinc-900" : "hover:text-zinc-900",
               ].join(" ")}
               title="主题"
-              aria-label="调整阅读主题"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
             </button>
           </div>
         </header>
@@ -1292,15 +1443,17 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
                           event.stopPropagation();
                           openParagraphRail(paragraph.idx);
                         }}
+                        aria-pressed={sidebarParagraph?.idx === paragraph.idx}
                         className={[
-                          "absolute -left-10 top-2 hidden h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-400 shadow-sm md:flex",
-                          "opacity-0 group-hover:opacity-100 group-hover:text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50",
-                          sidebarParagraph?.idx === paragraph.idx ? "opacity-100 text-zinc-900 border-zinc-300 bg-zinc-50" : "",
+                          "absolute -left-10 top-2 hidden h-7 w-7 items-center justify-center rounded-full border text-zinc-400 shadow-sm transition-all md:flex focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+                          sidebarParagraph?.idx === paragraph.idx
+                            ? "border-zinc-300 bg-zinc-50 text-zinc-900 opacity-100"
+                            : "border-zinc-200/70 bg-white opacity-60 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-800 hover:opacity-100 group-hover:opacity-100",
                         ].join(" ")}
                         title="查看这一段的逐句解析"
                         aria-label={`查看第 ${paragraph.idx + 1} 段的逐句解析`}
                       >
-                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true">
                           <path d="M5 12h14" />
                           <path d="M12 5l7 7-7 7" />
                         </svg>
@@ -1339,13 +1492,23 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
           </div>
         </div>
 
-        {/* Brain Icon for Sidebar toggle */}
-        <button 
+        {/* Floating rail toggle — only visible on mobile (the desktop sidebar has its own). */}
+        <button
+          type="button"
           onClick={toggleRail}
+          data-rail-trigger
           aria-label={isRailOpen ? "收起学习侧栏" : "打开学习侧栏"}
-          className="absolute bottom-8 right-8 w-12 h-12 bg-white rounded-full shadow-[0_4px_20px_rgba(0,0,0,0.08)] border border-zinc-100 flex items-center justify-center hover:bg-zinc-50 z-20"
+          aria-pressed={isRailOpen}
+          className={[
+            "absolute bottom-6 right-6 z-20 inline-flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-colors md:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+            isRailOpen ? "border-zinc-300 bg-zinc-50 text-zinc-900" : "border-zinc-100 text-zinc-700 hover:bg-zinc-50",
+          ].join(" ")}
         >
-          <span className="text-xl">🧠</span>
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true">
+            <path d="M9 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4" />
+            <polyline points="11 12 12 12 12 17 13 17" />
+            <circle cx="12" cy="7" r="1.5" fill="currentColor" stroke="none" />
+          </svg>
         </button>
       </main>
 
@@ -1359,8 +1522,14 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
           <div className="flex h-full flex-col px-7 py-6">
             <div className="border-b border-zinc-100 pb-4 flex justify-between items-center">
               <div className="text-xs uppercase tracking-[0.15em] text-zinc-400 font-semibold">学习侧栏</div>
-              <button onClick={toggleRail} className="text-zinc-400 hover:text-zinc-900" aria-label="关闭学习侧栏">
-                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <button
+                type="button"
+                onClick={toggleRail}
+                data-rail-trigger
+                aria-label="关闭学习侧栏"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
 
@@ -1456,7 +1625,14 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
                                 <div className="mb-3 flex items-center justify-between gap-3">
                                   <div className="flex items-center gap-2">
                                     <div className="text-[12px] font-medium text-zinc-500">第 {sentence.sentenceIdx + 1} 句</div>
-                                    <span className={["rounded px-1.5 py-0.5 text-[10px]", getSentenceStatusTone(sentence)].join(" ")}>
+                                    <span
+                                      className={["inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px]", getSentenceStatusTone(sentence)].join(" ")}
+                                      aria-label={`解析状态：${getSentenceActionLabel(sentence)}`}
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        className={["inline-block h-1.5 w-1.5 rounded-full", getSentenceStatusDotClass(sentence)].join(" ")}
+                                      />
                                       {getSentenceActionLabel(sentence)}
                                     </span>
                                   </div>
@@ -1465,17 +1641,36 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
                                       event.stopPropagation();
                                       speak(sentence.enText);
                                     }}
-                                    className={[
-                                      "inline-flex items-center text-zinc-400 transition-colors hover:text-zinc-900",
-                                      speakingText === sentence.enText ? "text-zinc-900" : "",
-                                    ].join(" ")}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter" || event.key === " ") {
+                                        event.preventDefault();
+                                        speak(sentence.enText);
+                                      }
+                                    }}
+                                    tabIndex={0}
                                     role="button"
-                                    aria-label={`朗读第 ${sentence.sentenceIdx + 1} 句`}
+                                    aria-pressed={speakingText === sentence.enText}
+                                    aria-label={
+                                      speakingText === sentence.enText
+                                        ? `停止朗读第 ${sentence.sentenceIdx + 1} 句`
+                                        : `朗读第 ${sentence.sentenceIdx + 1} 句`
+                                    }
+                                    className={[
+                                      "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+                                      speakingText === sentence.enText ? "bg-zinc-100 text-zinc-900" : "",
+                                    ].join(" ")}
                                   >
-                                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none">
-                                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
-                                    </svg>
+                                    {speakingText === sentence.enText ? (
+                                      <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                                        <rect x="6" y="5" width="4" height="14" rx="1" />
+                                        <rect x="14" y="5" width="4" height="14" rx="1" />
+                                      </svg>
+                                    ) : (
+                                      <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true">
+                                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+                                      </svg>
+                                    )}
                                   </span>
                                 </div>
                                 <div className="font-sans text-[15px] leading-7 text-zinc-900 break-words">
@@ -1559,11 +1754,16 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
 
                                     {questionAnswer ? (
                                     <section className="mt-5 pt-5 border-t border-black">
-                                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400">
-                                        Q&A
-                                      </div>
+                                      <label
+                                        htmlFor={`sentence-question-${sentence.id}`}
+                                        className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.1em] text-zinc-400"
+                                      >
+                                        Q&A · 对这句提问
+                                      </label>
                                       <div className="space-y-3">
                                         <textarea
+                                          id={`sentence-question-${sentence.id}`}
+                                          name={`sentence-question-${sentence.id}`}
                                           value={questionDraft}
                                           onClick={(event) => event.stopPropagation()}
                                           onChange={(event) => {
@@ -1572,13 +1772,24 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
                                           onInput={(event) => {
                                             updateSentenceQuestionDraft(sentence.id, event.currentTarget.value);
                                           }}
-                                          rows={1}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                                              event.preventDefault();
+                                              if (questionAnswer.status !== "submitting" && questionDraft.trim()) {
+                                                void submitSentenceQuestion(sentence);
+                                              }
+                                            }
+                                          }}
+                                          rows={2}
+                                          spellCheck={false}
+                                          autoComplete="off"
                                           placeholder="对这句话有疑问？直接问我..."
-                                          className="w-full resize-none rounded-lg bg-zinc-50 border border-transparent px-3 py-2 text-[13px] leading-6 text-zinc-800 outline-none transition-colors placeholder:text-zinc-400 focus:border-zinc-300 focus:bg-white"
+                                          aria-label={`对第 ${sentence.sentenceIdx + 1} 句提问`}
+                                          className="w-full resize-none rounded-lg bg-zinc-50 border border-transparent px-3 py-2 text-[13px] leading-6 text-zinc-800 outline-none transition-colors placeholder:text-zinc-400 focus-visible:border-zinc-300 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-emerald-500/40"
                                         />
                                         <div className="flex items-center justify-between">
                                           <div className="text-[11px] text-zinc-400">
-                                            {questionAnswer.status === "submitting" ? "思考中..." : "按 Enter 发送"}
+                                            {questionAnswer.status === "submitting" ? "思考中..." : "Shift+Enter 换行，Enter 发送"}
                                           </div>
                                           <button
                                             type="button"
@@ -1587,7 +1798,8 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
                                               void submitSentenceQuestion(sentence);
                                             }}
                                             disabled={questionAnswer.status === "submitting" || !questionDraft.trim()}
-                                            className="rounded bg-zinc-900 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-zinc-800 disabled:bg-zinc-100 disabled:text-zinc-400"
+                                            aria-label="发送问题"
+                                            className="rounded bg-zinc-900 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-zinc-800 disabled:bg-zinc-100 disabled:text-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70"
                                           >
                                             发送
                                           </button>
@@ -1689,12 +1901,7 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
         <div
           className="fixed inset-0 z-[100]"
           onMouseDown={() => {
-            audioRef.current?.pause();
-            setPopoverPos(null);
-            setLookup(null);
-            setLookupError(null);
-            setVocabStatus("idle");
-            setVocabMessage(null);
+            closeLookup();
           }}
         >
           <div
@@ -1765,15 +1972,25 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {lookup?.pronunciation?.audioUrl ? (
-                    <button
-                      onClick={() => speak(lookup.headword || selectedWord)}
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 hover:bg-zinc-200 transition-colors"
-                      title="发音"
-                    >
-                      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => speak(lookup?.headword || selectedWord)}
+                    aria-pressed={Boolean(speakingText)}
+                    aria-label={speakingText ? "停止发音" : "播放发音"}
+                    className={[
+                      "flex h-8 w-8 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
+                      speakingText
+                        ? "bg-emerald-500 text-white hover:bg-emerald-600"
+                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200",
+                    ].join(" ")}
+                    title={speakingText ? "停止" : "发音"}
+                  >
+                    {speakingText ? (
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                    )}
+                  </button>
 
                   <button
                     onClick={() => void addToVocab()}
