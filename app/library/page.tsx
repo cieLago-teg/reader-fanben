@@ -191,12 +191,6 @@ export default function LibraryPage() {
               一篇文章，从导入到精读的三个动作
             </h2>
           </div>
-          <Link
-            href="/import"
-            className="hidden text-sm font-medium text-zinc-700 underline underline-offset-4 hover:text-zinc-900 md:inline-block"
-          >
-            开始一次导入 →
-          </Link>
         </div>
         <div className="mt-6 grid gap-6 md:grid-cols-3">
           {WORKFLOW_STEPS.map((s) => (

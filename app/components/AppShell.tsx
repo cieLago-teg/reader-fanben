@@ -45,12 +45,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-screen">
         <aside className="hidden w-20 shrink-0 border-r border-black/5 bg-[#F8F6F0] md:flex md:flex-col md:items-center md:justify-between md:py-6">
           <div className="flex flex-col items-center gap-4">
-            <Link
-              href="/library"
-              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-900 text-sm font-semibold text-white"
+            <span
+              aria-label="Fanben Reader"
+              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-900 text-sm font-semibold text-white select-none"
             >
               FR
-            </Link>
+            </span>
             <NavItem href="/import" label="导入文章" shortLabel="导" />
             <NavItem href="/library" label="文章库" shortLabel="库" />
             <NavItem href="/vocab" label="生词本" shortLabel="词" />
