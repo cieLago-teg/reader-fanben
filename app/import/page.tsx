@@ -88,7 +88,7 @@ export default function ImportPage() {
             onClick={() => setMode("url")}
             type="button"
           >
-            导入 URL
+            导入网址
           </button>
           <button
             className={[
