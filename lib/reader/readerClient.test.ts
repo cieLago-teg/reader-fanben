@@ -774,33 +774,6 @@ test("switching from English mode to bilingual keeps the current paragraph ancho
   assert.deepEqual(currentEnv.scrollCalls, ["1"]);
 });
 
-test("appearance settings can be opened and change reading density", async () => {
-  currentEnv = await renderReader();
-
-  const appearanceButton = Array.from(currentEnv.container.querySelectorAll("button")).find((button) =>
-    button.getAttribute("aria-label")?.includes("调整阅读主题"),
-  );
-  assert.ok(appearanceButton, "找不到阅读主题按钮");
-
-  await act(async () => {
-    appearanceButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  });
-
-  assert.match(currentEnv.container.textContent ?? "", /阅读外观/);
-
-  const compactButton = Array.from(currentEnv.container.querySelectorAll("button")).find((button) =>
-    button.textContent?.includes("紧凑"),
-  );
-  assert.ok(compactButton, "找不到紧凑密度按钮");
-
-  await act(async () => {
-    compactButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  });
-
-  const readingSurface = currentEnv.container.querySelector("[data-reader-density]");
-  assert.equal(readingSurface?.getAttribute("data-reader-density"), "compact");
-});
-
 test("opening a paragraph analysis expands sentence details inline without a separate bottom panel", async () => {
   const payload = createPayload();
   payload.document.analysisSummary = {

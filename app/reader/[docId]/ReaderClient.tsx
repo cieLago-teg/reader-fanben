@@ -145,10 +145,7 @@ type LookupWordHit = {
 
 const VIEW_MODE_STORAGE_KEY = "reader:view-mode";
 const RAIL_OPEN_STORAGE_KEY = "reader:rail-open";
-const DENSITY_STORAGE_KEY = "reader:density";
-
 type RailTab = "analysis" | "notes";
-type ReaderDensity = "relaxed" | "compact" | "immersive";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -162,13 +159,6 @@ function readStoredViewMode(): ReaderMode {
 function readStoredRailState() {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(RAIL_OPEN_STORAGE_KEY) === "1";
-}
-
-function readStoredDensity(): ReaderDensity {
-  if (typeof window === "undefined") return "relaxed";
-  const density = window.localStorage.getItem(DENSITY_STORAGE_KEY);
-  if (density === "compact" || density === "immersive") return density;
-  return "relaxed";
 }
 
 function readUrlState(): {
@@ -437,8 +427,6 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
   const [viewMode, setViewMode] = useState<ReaderMode>("en");
   const [isRailOpen, setIsRailOpen] = useState(false);
   const [railTab, setRailTab] = useState<RailTab>("analysis");
-  const [readerDensity, setReaderDensity] = useState<ReaderDensity>("relaxed");
-  const [isAppearanceOpen, setIsAppearanceOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [focusedParagraphIdx, setFocusedParagraphIdx] = useState<number | null>(null);
   const [percent, setPercent] = useState(0);
@@ -533,33 +521,12 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
     const summary = data.document.analysisSummary;
     return `句子 ${summary.total} / 已完成 ${summary.ready} / 待补齐 ${summary.pending + summary.processing} / 失败 ${summary.failed}`;
   }, [data]);
-  const readingModeText = viewMode === "bilingual" ? "双语" : "纯英";
-  const densityLabel =
-    readerDensity === "compact" ? "紧凑" : readerDensity === "immersive" ? "沉浸" : "舒展";
   const readingSurfaceClass =
-    readerDensity === "compact"
-      ? viewMode === "bilingual"
-        ? "mx-auto max-w-[1120px]"
-        : "mx-auto max-w-[660px]"
-      : readerDensity === "immersive"
-        ? viewMode === "bilingual"
-          ? "mx-auto max-w-[1280px]"
-          : "mx-auto max-w-[760px]"
-        : viewMode === "bilingual"
-          ? "mx-auto max-w-[1200px]"
-          : "mx-auto max-w-[700px]";
-  const englishParagraphClass =
-    readerDensity === "compact"
-      ? "text-[1.05rem] leading-[1.9rem] text-zinc-800 font-sans"
-      : readerDensity === "immersive"
-        ? "text-[1.22rem] leading-[2.16rem] text-zinc-800 font-sans"
-        : "text-[1.15rem] leading-[2rem] text-zinc-800 font-sans";
-  const bilingualParagraphClass =
-    readerDensity === "compact"
-      ? "text-[0.96rem] leading-[1.9rem] text-zinc-800"
-      : readerDensity === "immersive"
-        ? "text-[1.06rem] leading-[2.16rem] text-zinc-800"
-        : "text-[1rem] leading-[2rem] text-zinc-800";
+    viewMode === "bilingual"
+      ? "mx-auto max-w-[1280px]"
+      : "mx-auto max-w-[760px]";
+  const englishParagraphClass = "text-[1.22rem] leading-[2.16rem] text-zinc-800 font-sans";
+  const bilingualParagraphClass = "text-[1.06rem] leading-[2.16rem] text-zinc-800";
 
   const loadDocument = useCallback(
     async (options?: { silent?: boolean; syncPercent?: boolean }) => {
@@ -594,14 +561,12 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
 
   useEffect(() => {
     const nextViewMode = readStoredViewMode();
-    const nextDensity = readStoredDensity();
     const urlState = readUrlState();
     const nextRailState = urlState.railOpen ?? readStoredRailState();
     const nextRailTab: RailTab = urlState.railTab ?? "analysis";
     const frameId = window.requestAnimationFrame(() => {
       setViewMode(nextViewMode);
       setIsRailOpen(nextRailState);
-      setReaderDensity(nextDensity);
       setRailTab(nextRailTab);
       if (urlState.paragraphIdx !== null) {
         setFocusedParagraphIdx(urlState.paragraphIdx);
@@ -765,13 +730,6 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
     setViewMode(nextMode);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, nextMode);
-    }
-  };
-
-  const updateReaderDensity = (density: ReaderDensity) => {
-    setReaderDensity(density);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(DENSITY_STORAGE_KEY, density);
     }
   };
 
@@ -1339,62 +1297,13 @@ export function ReaderClient({ docId, fetcher = apiFetch }: ReaderClientProps) {
             >
               <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill={favored ? "currentColor" : "none"} aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
             </button>
-            <button
-              type="button"
-              onClick={() => setIsAppearanceOpen((current) => !current)}
-              aria-pressed={isAppearanceOpen}
-              aria-label="调整阅读主题"
-              className={[
-                "inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500/70",
-                isRailOpen
-                  ? "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50"
-                  : "border-transparent",
-                isAppearanceOpen ? "border-zinc-300 bg-zinc-50 text-zinc-900" : "hover:text-zinc-900",
-              ].join(" ")}
-              title="主题"
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-            </button>
           </div>
         </header>
-
-        {isAppearanceOpen ? (
-          <div className="absolute right-6 top-16 z-30 w-72 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_24px_64px_rgba(15,23,42,0.14)]">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">阅读外观</div>
-            <div className="mt-3 text-xs leading-6 text-zinc-500">
-              当前模式：{readingModeText}，正文密度：{densityLabel}
-            </div>
-            <div className="mt-4 space-y-2">
-              {[
-                { value: "compact" as const, label: "紧凑", hint: "更像信息密度高的工作流视图" },
-                { value: "relaxed" as const, label: "舒展", hint: "默认留白，适合长时间阅读" },
-                { value: "immersive" as const, label: "沉浸", hint: "更大的字号和更松的行距" },
-              ].map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => updateReaderDensity(option.value)}
-                  className={[
-                    "w-full rounded-xl border px-3 py-3 text-left transition-colors",
-                    readerDensity === option.value
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50",
-                  ].join(" ")}
-                >
-                  <div className="text-sm font-medium">{option.label}</div>
-                  <div className={["mt-1 text-[11px]", readerDensity === option.value ? "text-zinc-200" : "text-zinc-500"].join(" ")}>
-                    {option.hint}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         {/* Scrollable Document Area */}
         <div
           className="flex-1 overflow-y-auto pb-32 pt-10 px-6 sm:px-12 md:px-16 lg:px-24"
-          data-reader-density={readerDensity}
+          data-reader-density="immersive"
           onScroll={(e) => { const target = e.currentTarget; const docHeight = target.scrollHeight - target.clientHeight; if (docHeight > 0) setPercent(target.scrollTop / docHeight); const closest = getClosestParagraphIdx(enRefs.current); if (closest !== null && closest !== activeIdx) setActiveIdx(closest); }}
         >
           <div className={readingSurfaceClass}>
